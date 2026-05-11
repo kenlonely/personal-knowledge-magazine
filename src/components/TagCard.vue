@@ -63,21 +63,21 @@
             </button>
           </template>
 
-          <!-- <template v-else>
+          <template v-else>
             <div v-html="fullHtml"></div>
-          </template> -->
+          </template>
         </div>
       </template>
 
       <template v-else>
         <h3 class="tag-title">{{ tag.parsed.displayTitle }}</h3>
-        <!-- <div v-if="showRawMediaCode" class="raw-code">
+        <div v-if="showRawMediaCode" class="raw-code">
           {{ tag.name }}
-        </div> -->
+        </div>
       </template>
 
       <div class="meta-row">
-        <!-- <span>ID: {{ tag.id }}</span> -->
+        <span>ID: {{ tag.id }}</span>
         <span>Updated: {{ tag.updatedAtFormatted }}</span>
       </div>
 
@@ -210,23 +210,23 @@ const renderedChunks = computed(() => {
   })
 })
 
-// const fullHtml = computed(() => {
-//   if (!isTextType.value) return ''
-//   return paragraphs.value
-//     .map((chunk) => {
-//       const lines = chunk
-//         .split('\n')
-//         .map((line) => line.trim())
-//         .filter(Boolean)
+const fullHtml = computed(() => {
+  if (!isTextType.value) return ''
+  return paragraphs.value
+    .map((chunk) => {
+      const lines = chunk
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
 
-//       return `
-//         <div class="chunk-block">
-//           ${lines.map((line) => `<p>${highlightText(line, normalizedSearch.value)}</p>`).join('')}
-//         </div>
-//       `
-//     })
-//     .join('')
-// })
+      return `
+        <div class="chunk-block">
+          ${lines.map((line) => `<p>${highlightText(line, normalizedSearch.value)}</p>`).join('')}
+        </div>
+      `
+    })
+    .join('')
+})
 
 const showSnippetMode = computed(() => {
   return Boolean(normalizedSearch.value) && isTextType.value
