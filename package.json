@@ -25,7 +25,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
-    "@vitejs/plugin-vue": "^5.1.4",
+    "@vitejs/plugin-vue": "^6.0.6",
     "prisma": "^6.19.3",
     "ts-node-dev": "^2.0.0",
     "typescript": "^6.0.3",
