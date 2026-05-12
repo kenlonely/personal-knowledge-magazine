@@ -2,13 +2,14 @@ import { computed, ref } from 'vue'
 import rawData from '../data/tags.json'
 
 function decodeHtmlEntities(str = '') {
+  if (typeof document === 'undefined') return str
   const txt = document.createElement('textarea')
   txt.innerHTML = str
   return txt.value
 }
 
 function stripHtml(str = '') {
-  return str.replace(/<[^>]*>/g, '').trim()
+  return String(str).replace(/<[^>]*>/g, '').trim()
 }
 
 function parseAttributes(html = '') {
@@ -24,14 +25,15 @@ function parseAttributes(html = '') {
 }
 
 function detectType(name = '') {
-  const lower = name.toLowerCase().trim()
+  const lower = String(name).toLowerCase().trim()
 
   if (lower.startsWith('<img')) return 'image'
   if (lower.startsWith('<iframe')) return 'iframe'
+  if (lower.startsWith('<video')) return 'video'
   return 'text'
 }
 
-function parseTagName(name, id) {
+function parseTagName(name = '') {
   const type = detectType(name)
 
   if (type === 'image') {
@@ -63,9 +65,21 @@ function parseTagName(name, id) {
     }
   }
 
- 
+  if (type === 'video') {
+    const attrs = parseAttributes(name)
+    const src = attrs.src || ''
+    const title = decodeHtmlEntities(attrs.title || 'Video')
 
-  const text = decodeHtmlEntities(name)
+    return {
+      type,
+      src,
+      displayTitle: title || 'Video',
+      summary: '',
+      rawText: name
+    }
+  }
+
+  const text = decodeHtmlEntities(stripHtml(name))
 
   return {
     type: 'text',
@@ -89,13 +103,15 @@ function formatDate(isoString) {
 }
 
 function normalizeTag(tag) {
-  const parsed = parseTagName(tag.name, tag.id)
+  const parsed = parseTagName(tag?.name ?? '')
 
   return {
     ...tag,
     parsed,
-    createdAtFormatted: formatDate(tag.createdAt),
-    updatedAtFormatted: formatDate(tag.updatedAt)
+    hidden: Boolean(tag?.hidden),
+    struck: Boolean(tag?.struck),
+    createdAtFormatted: formatDate(tag?.createdAt),
+    updatedAtFormatted: formatDate(tag?.updatedAt)
   }
 }
 
@@ -106,17 +122,74 @@ function createInitialTags() {
 
 const tagsState = ref(createInitialTags())
 
+function sortByUpdatedAtDesc(a, b) {
+  return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
+}
+
+function mergeAndSortTags(newTags) {
+  const existingMap = new Map(tagsState.value.map((tag) => [tag.id, tag]))
+
+  for (const item of newTags) {
+    const normalized = normalizeTag(item)
+    existingMap.set(normalized.id, normalized)
+  }
+
+  tagsState.value = Array.from(existingMap.values()).sort(sortByUpdatedAtDesc)
+}
+
+function parseImportTextInWorker(text) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/tagImport.worker.js', import.meta.url), {
+      type: 'module'
+    })
+
+    worker.onmessage = (event) => {
+      const data = event.data || {}
+      worker.terminate()
+
+      if (data.ok) {
+        resolve(data.tags || [])
+      } else {
+        reject(new Error(data.error || 'Import failed'))
+      }
+    }
+
+    worker.onerror = (error) => {
+      worker.terminate()
+      reject(error)
+    }
+
+    worker.postMessage({ text })
+  })
+}
+
 export function useSanitizedTags() {
   const parsedTags = computed(() => tagsState.value)
 
-  const stats = computed(() => ({
-    exportedAt: rawData.exportedAt,
-    exportedAtFormatted: formatDate(rawData.exportedAt),
-    totalTags: parsedTags.value.length,
-    textCount: parsedTags.value.filter((item) => item.parsed.type === 'text').length,
-    imageCount: parsedTags.value.filter((item) => item.parsed.type === 'image').length,
-    iframeCount: parsedTags.value.filter((item) => item.parsed.type === 'iframe').length,
-  }))
+  const stats = computed(() => {
+    let textCount = 0
+    let imageCount = 0
+    let iframeCount = 0
+    let videoCount = 0
+
+    for (const item of tagsState.value) {
+      const type = item?.parsed?.type
+      if (type === 'text') textCount += 1
+      else if (type === 'image') imageCount += 1
+      else if (type === 'iframe') iframeCount += 1
+      else if (type === 'video') videoCount += 1
+    }
+
+    return {
+      exportedAt: rawData.exportedAt,
+      exportedAtFormatted: formatDate(rawData.exportedAt),
+      totalTags: tagsState.value.length,
+      textCount,
+      imageCount,
+      iframeCount,
+      videoCount
+    }
+  })
 
   function addTag(name) {
     const now = new Date().toISOString()
@@ -150,23 +223,33 @@ export function useSanitizedTags() {
     tagsState.value = tagsState.value.filter((tag) => tag.id !== id)
   }
 
+  function importTagsFromBatch(batch) {
+    if (!Array.isArray(batch)) {
+      throw new Error('importTagsFromBatch expects an array')
+    }
+
+    mergeAndSortTags(batch)
+  }
+
+  async function importTagsFromFileContentWithWorker(jsonText) {
+    const tags = await parseImportTextInWorker(jsonText)
+    mergeAndSortTags(tags)
+  }
+
   function importTagsFromFileContent(jsonText) {
     const parsed = JSON.parse(jsonText)
 
-    if (!parsed.tags || !Array.isArray(parsed.tags)) {
-      throw new Error('Invalid JSON format: "tags" array not found.')
+    const list = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.tags)
+        ? parsed.tags
+        : null
+
+    if (!list) {
+      throw new Error('Invalid JSON format: expected an array or an object with a "tags" array.')
     }
 
-    const existingMap = new Map(tagsState.value.map((tag) => [tag.id, tag]))
-
-    for (const item of parsed.tags) {
-      const normalized = normalizeTag(item)
-      existingMap.set(normalized.id, normalized)
-    }
-
-    tagsState.value = Array.from(existingMap.values()).sort((a, b) => {
-      return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
-    })
+    mergeAndSortTags(list)
   }
 
   function exportTagsToFile() {
@@ -176,6 +259,8 @@ export function useSanitizedTags() {
       tags: tagsState.value.map((tag) => ({
         id: tag.id,
         name: tag.name,
+        hidden: Boolean(tag.hidden),
+        struck: Boolean(tag.struck),
         createdAt: tag.createdAt,
         updatedAt: tag.updatedAt
       }))
@@ -200,7 +285,9 @@ export function useSanitizedTags() {
     addTag,
     editTag,
     deleteTag,
+    importTagsFromBatch,
     importTagsFromFileContent,
+    importTagsFromFileContentWithWorker,
     exportTagsToFile
   }
 }

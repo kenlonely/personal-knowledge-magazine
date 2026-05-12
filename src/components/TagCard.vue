@@ -5,7 +5,7 @@
     :class="[
       sizeClass,
       `img-size-${imgSizeMode}`,
-      { 'is-hidden': tag.hidden, 'is-struck': tag.struck }
+      { 'is-hidden': tag.hidden, 'is-struck': tag.struck, 'is-expanded': isExpanded }
     ]"
   >
     <div
@@ -40,65 +40,84 @@
     </div>
 
     <div class="tag-body">
-      <div class="card-kicker">{{ tag.parsed.type }}</div>
+      <div class="body-header">
+        <div class="card-kicker">{{ tag.parsed.type }}</div>
 
-      <template v-if="tag.parsed.type === 'text'">
-        <div class="text-content prose-text">
-          <div v-if="showSnippetMode" class="snippet-box" v-html="snippetHtml"></div>
+        <button class="toggle-btn" type="button" @click="toggleBody">
+          {{ isExpanded ? '收起資訊' : '展開資訊' }}
+        </button>
+      </div>
 
-          <template v-else-if="isLong && renderedChunks.length">
-            <div
-              v-for="(chunk, chunkIndex) in renderedChunks"
-              :key="`${tag.id}-${chunkIndex}`"
-              class="chunk-block"
-              v-html="chunk"
-            ></div>
+      <!-- content 永遠展示 -->
+      <div class="tag-content">
+        <template v-if="tag.parsed.type === 'text'">
+          <div class="text-content prose-text">
+            <div v-if="showSnippetMode" class="snippet-box" v-html="snippetHtml"></div>
 
+            <template v-else-if="isLong && renderedChunks.length">
+              <div
+                v-for="(chunk, chunkIndex) in renderedChunks"
+                :key="`${tag.id}-${chunkIndex}`"
+                class="chunk-block"
+                v-html="chunk"
+              ></div>
+
+              <button
+                v-if="visibleChunkCount < chunks.length"
+                class="load-more-btn"
+                @click="loadMore"
+              >
+                Load More
+              </button>
+            </template>
+
+            <template v-else>
+              <div v-html="fullHtml"></div>
+            </template>
+          </div>
+        </template>
+
+        <template v-else>
+          <!-- 這個 tag-title 也算收起資訊，所以移到 more 區塊 -->
+        </template>
+      </div>
+
+      <!-- 收起資訊：tag-title / raw-code / meta / actions -->
+      <transition name="fade-slide">
+        <div v-show="isExpanded" class="tag-body-more">
+          <h3 v-if="tag.parsed.type !== 'text'" class="tag-title">
+            {{ tag.parsed.displayTitle }}
+          </h3>
+
+          <div v-if="showRawMediaCode" class="raw-code">
+            {{ tag.name }}
+          </div>
+
+          <div class="meta-row">
+            <span>ID: {{ tag.id }}</span>
+            <span>Updated: {{ tag.updatedAtFormatted }}</span>
+          </div>
+
+          <div class="action-row">
+            <button class="action-btn" @click="$emit('edit', tag)">Edit</button>
+            <button class="action-btn" @click="$emit('delete', tag.id)">Delete</button>
+            <button class="action-btn" @click="handleCopy">Copy</button>
             <button
-              v-if="visibleChunkCount < chunks.length"
-              class="load-more-btn"
-              @click="loadMore"
+              class="action-btn"
+              @click="$emit('find', tag.parsed.type === 'text' ? tag.parsed.displayTitle : tag.name)"
             >
-              Load More
+              Find
             </button>
-          </template>
-
-          <template v-else>
-            <div v-html="fullHtml"></div>
-          </template>
+            <button class="action-btn" @click="$emit('toggle-hide', tag.id)">
+              {{ tag.hidden ? 'Unhide' : 'Hide' }}
+            </button>
+            <button class="action-btn" @click="$emit('toggle-strike', tag.id)">
+              {{ tag.struck ? 'Unstrike' : 'Strike' }}
+            </button>
+            <button class="action-btn" @click="goFullscreen">Fullscreen</button>
+          </div>
         </div>
-      </template>
-
-      <template v-else>
-        <h3 class="tag-title">{{ tag.parsed.displayTitle }}</h3>
-        <div v-if="showRawMediaCode" class="raw-code">
-          {{ tag.name }}
-        </div>
-      </template>
-
-      <div class="meta-row">
-        <span>ID: {{ tag.id }}</span>
-        <span>Updated: {{ tag.updatedAtFormatted }}</span>
-      </div>
-
-      <div class="action-row">
-        <button class="action-btn" @click="$emit('edit', tag)">Edit</button>
-        <button class="action-btn" @click="$emit('delete', tag.id)">Delete</button>
-        <button class="action-btn" @click="handleCopy">Copy</button>
-        <button
-          class="action-btn"
-          @click="$emit('find', tag.parsed.type === 'text' ? tag.parsed.displayTitle : tag.name)"
-        >
-          Find
-        </button>
-        <button class="action-btn" @click="$emit('toggle-hide', tag.id)">
-          {{ tag.hidden ? 'Unhide' : 'Hide' }}
-        </button>
-        <button class="action-btn" @click="$emit('toggle-strike', tag.id)">
-          {{ tag.struck ? 'Unstrike' : 'Strike' }}
-        </button>
-        <button class="action-btn" @click="goFullscreen">Fullscreen</button>
-      </div>
+      </transition>
     </div>
   </article>
 </template>
@@ -129,6 +148,7 @@ defineEmits(['edit', 'delete', 'find', 'toggle-hide', 'toggle-strike'])
 
 const rootEl = ref(null)
 const visibleChunkCount = ref(3)
+const isExpanded = ref(false)
 
 const isTextType = computed(() => props.tag?.parsed?.type === 'text')
 const rawText = computed(() => {
@@ -155,7 +175,7 @@ function highlightText(text, keyword) {
   const safeText = escapeHtml(text)
   if (!keyword) return safeText
 
-  const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const escapedKeyword = keyword.replace(/[.*+?^${}()|[]\]/g, '\\$&')
   const regex = new RegExp(`(${escapedKeyword})`, 'ig')
   return safeText.replace(regex, '<mark>$1</mark>')
 }
@@ -173,15 +193,14 @@ const chunkSize = 300
 const chunks = computed(() => {
   if (!isTextType.value) return []
 
-const text = rawText.value.trim()
+  const text = rawText.value.trim()
   if (!text) return []
 
-const paragraphsArr = text
+  const paragraphsArr = text
     .split(/\n{2,}/)
     .map((item) => item.trim())
     .filter(Boolean)
 
-  // 如果只有一大段，就按字符数切块
   if (paragraphsArr.length <= 1 && text.length > chunkSize) {
     const result = []
     for (let i = 0; i < text.length; i += chunkSize) {
@@ -252,6 +271,10 @@ const snippetHtml = computed(() => {
 
   return `<p>${highlightText(snippet, keyword)}</p>`
 })
+
+function toggleBody() {
+  isExpanded.value = !isExpanded.value
+}
 
 function loadMore() {
   visibleChunkCount.value += 3
@@ -329,12 +352,11 @@ function goFullscreen() {
   background: #f5f5f5;
 }
 
-
 .tag-video,
 .tag-iframe {
   display: block;
   width: 100%;
-  max-width: 100%;;
+  max-width: 100%;
   border: 0;
   background: #f3f3f3;
 }
@@ -343,7 +365,6 @@ function goFullscreen() {
 .img-size-sm .tag-video,
 .img-size-sm .tag-iframe {
   width: 220px;
-
 }
 
 .img-size-md .media-stage,
@@ -356,14 +377,12 @@ function goFullscreen() {
 .img-size-lg .tag-video,
 .img-size-lg .tag-iframe {
   width: 460px;
-
 }
 
 .img-size-xl .media-stage,
 .img-size-xl .tag-video,
 .img-size-xl .tag-iframe {
   width: 620px;
-
 }
 
 .tag-body {
@@ -375,6 +394,13 @@ function goFullscreen() {
   min-width: 0;
 }
 
+.body-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .card-kicker {
   font-size: 12px;
   font-weight: 700;
@@ -383,12 +409,30 @@ function goFullscreen() {
   color: #7a7a7a;
 }
 
-.tag-title {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.35;
-  color: #171717;
-  word-break: break-word;
+.toggle-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 13px;
+  background: #f2f2f2;
+  color: #181818;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.16s ease, transform 0.16s ease;
+  white-space: nowrap;
+}
+
+.toggle-btn:hover {
+  background: #e8e8e8;
+  transform: translateY(-1px);
+}
+
+.tag-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
 }
 
 .text-content {
@@ -427,6 +471,20 @@ function goFullscreen() {
   border: 1px solid #eee2aa;
 }
 
+.tag-body-more {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tag-title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.35;
+  color: #171717;
+  word-break: break-word;
+}
+
 .raw-code {
   padding: 12px 14px;
   border-radius: 14px;
@@ -444,7 +502,6 @@ function goFullscreen() {
   gap: 8px 16px;
   font-size: 12px;
   color: #7b7b7b;
-  margin-top: auto;
 }
 
 .action-row {
@@ -471,6 +528,17 @@ function goFullscreen() {
 .load-more-btn:hover {
   background: #e8e8e8;
   transform: translateY(-1px);
+}
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 @media (max-width: 900px) {
@@ -500,6 +568,14 @@ function goFullscreen() {
 
   .tag-body {
     padding: 14px;
+  }
+
+  .body-header {
+    align-items: flex-start;
+  }
+
+  .prose-text :deep(p) {
+    font-size: 18px;
   }
 }
 </style>

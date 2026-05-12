@@ -8,7 +8,6 @@ import {
   normalizeInputToTagContent,
   parseAttributes,
   removeDuplicateTags,
-  stripHtml,
 } from '../utils/tagUtils'
 
 const STORAGE_KEY = 'my_tags_state_v21'
@@ -67,12 +66,12 @@ function parseTagName(name = '') {
     }
   }
 
- 
+  const text = decodeHtmlEntities(name)
 
   return {
     type: 'text',
-    displayTitle: decodeHtmlEntities(name),
-    rawText: decodeHtmlEntities(name),
+    displayTitle: text,
+    rawText: text,
   }
 }
 
@@ -80,13 +79,13 @@ function normalizeTag(tag) {
   const now = new Date().toISOString()
 
   const normalized = {
-    id: tag.id || generateTagId(),
-    name: tag.name || '',
-    createdAt: tag.createdAt || now,
-    updatedAt: tag.updatedAt || tag.createdAt || now,
-    hidden: !!tag.hidden,
-    struck: !!tag.struck,
-    meta: tag.meta || {},
+    id: tag?.id || generateTagId(),
+    name: tag?.name || '',
+    createdAt: tag?.createdAt || now,
+    updatedAt: tag?.updatedAt || tag?.createdAt || now,
+    hidden: !!tag?.hidden,
+    struck: !!tag?.struck,
+    meta: tag?.meta || {},
   }
 
   return {
@@ -120,17 +119,22 @@ function getInitialTags() {
     console.error(error)
   }
 
-  const initialTags = Array.isArray(rawData?.tags) ? rawData.tags : Array.isArray(rawData) ? rawData : []
+  const initialTags = Array.isArray(rawData?.tags)
+    ? rawData.tags
+    : Array.isArray(rawData)
+      ? rawData
+      : []
+
   return initialTags.map(normalizeTag)
 }
 
 const tagsState = ref(getInitialTags())
 const undoStack = ref([])
+
 const viewMode = ref(localStorage.getItem(VIEW_KEY) || 'grid-list')
 const pageSizeState = ref(Number(localStorage.getItem(PAGE_SIZE_KEY) || 20))
 const imgSizeMode = ref(localStorage.getItem(IMG_SIZE_KEY) || 'md')
 const bodyWidthMode = ref(localStorage.getItem(BODY_WIDTH_KEY) || 'default')
-
 
 watch(
   tagsState,
@@ -152,6 +156,18 @@ function setBodyWidthMode(mode) {
 function pushUndoSnapshot() {
   undoStack.value.push(tagsState.value.map(serializeTag))
   if (undoStack.value.length > 40) undoStack.value.shift()
+}
+
+function replaceTags(nextTags) {
+  tagsState.value = nextTags.map(normalizeTag)
+}
+
+function getLangType(str) {
+  const s = (str || '').trim()
+
+  if (/[\u4E00-\u9FFF]/.test(s)) return 'zh'
+  if (/[A-Za-z]/.test(s)) return 'en'
+  return 'other'
 }
 
 export function useTagManager() {
@@ -250,70 +266,58 @@ export function useTagManager() {
     tagsState.value = arr
   }
 
-let englishFirst = false
+  function sortByLength() {
+    pushUndoSnapshot()
 
-function getLangType(str) {
-  const s = (str || "").trim()
+    const englishFirst = sortByLength._englishFirst = !sortByLength._englishFirst
 
-  if (/[\u4E00-\u9FFF]/.test(s)) return "zh"
-  if (/[A-Za-z]/.test(s)) return "en"
-  return "other"
-}
+    const zhCollator = new Intl.Collator('zh-Hant-u-co-stroke', {
+      sensitivity: 'base',
+      numeric: true,
+    })
 
-function getTypeOrder(type) {
-  if (englishFirst) {
-    if (type === "en") return 0
-    if (type === "zh") return 1
-    return 2
-  } else {
-    if (type === "zh") return 0
-    if (type === "en") return 1
-    return 2
+    const enCollator = new Intl.Collator('en', {
+      sensitivity: 'base',
+      numeric: true,
+    })
+
+    tagsState.value = [...tagsState.value].sort((a, b) => {
+      const aName = (a.name || '').trim()
+      const bName = (b.name || '').trim()
+
+      const aType = getLangType(aName)
+      const bType = getLangType(bName)
+
+      const getTypeOrder = (type) => {
+        if (englishFirst) {
+          if (type === 'en') return 0
+          if (type === 'zh') return 1
+          return 2
+        } else {
+          if (type === 'zh') return 0
+          if (type === 'en') return 1
+          return 2
+        }
+      }
+
+      const typeDiff = getTypeOrder(aType) - getTypeOrder(bType)
+      if (typeDiff !== 0) return typeDiff
+
+      const lenDiff = [...aName].length - [...bName].length
+      if (lenDiff !== 0) return lenDiff
+
+      if (aType === 'zh' && bType === 'zh') {
+        return zhCollator.compare(aName, bName)
+      }
+
+      if (aType === 'en' && bType === 'en') {
+        return enCollator.compare(aName, bName)
+      }
+
+      return aName.localeCompare(bName)
+    })
   }
-}
-
-function sortByLength() {
-  pushUndoSnapshot()
-
-  englishFirst = !englishFirst
-
-  const zhCollator = new Intl.Collator("zh-Hant-u-co-stroke", {
-    sensitivity: "base",
-    numeric: true,
-  })
-
-  const enCollator = new Intl.Collator("en", {
-    sensitivity: "base",
-    numeric: true,
-  })
-
-  tagsState.value = [...tagsState.value].sort((a, b) => {
-    const aName = (a.name || "").trim()
-    const bName = (b.name || "").trim()
-
-    const aType = getLangType(aName)
-    const bType = getLangType(bName)
-
-    // 1. 先依中英群組排序
-    const typeDiff = getTypeOrder(aType) - getTypeOrder(bType)
-    if (typeDiff !== 0) return typeDiff
-
-    // 2. 同群組比字串長度
-    const lenDiff = [...aName].length - [...bName].length
-    if (lenDiff !== 0) return lenDiff
-
-    // 3. 同群組同長度，再做穩定文字排序
-    if (aType === "zh" && bType === "zh") {
-      return zhCollator.compare(aName, bName)
-    }
-
-    if (aType === "en" && bType === "en") {
-      return enCollator.compare(aName, bName)
-    }
-
-    return aName.localeCompare(bName)
-  })
-}
+  sortByLength._englishFirst = false
 
   function removeDuplicates() {
     pushUndoSnapshot()
@@ -331,6 +335,38 @@ function sortByLength() {
     } else {
       throw new Error('Invalid JSON format')
     }
+
+    pushUndoSnapshot()
+
+    const merged = [...tagsState.value.map((t) => ({ ...serializeTag(t) }))]
+    for (const item of incoming) {
+      merged.push(item)
+    }
+
+    tagsState.value = removeDuplicateTags(merged).map(normalizeTag)
+  }
+
+  async function importTagsFromFileContentWithWorker(jsonText) {
+    const worker = new Worker(new URL('../workers/tagImport.worker.js', import.meta.url), {
+      type: 'module',
+    })
+
+    const incoming = await new Promise((resolve, reject) => {
+      worker.onmessage = (event) => {
+        const data = event.data || {}
+        worker.terminate()
+
+        if (data.ok) resolve(data.tags || [])
+        else reject(new Error(data.error || 'Import failed'))
+      }
+
+      worker.onerror = (error) => {
+        worker.terminate()
+        reject(error)
+      }
+
+      worker.postMessage({ text: jsonText })
+    })
 
     pushUndoSnapshot()
 
@@ -383,6 +419,11 @@ function sortByLength() {
     await navigator.clipboard.writeText(payload)
   }
 
+  function clearAllTags() {
+    pushUndoSnapshot()
+    tagsState.value = []
+  }
+
   function setViewMode(mode) {
     viewMode.value = mode
   }
@@ -401,6 +442,7 @@ function sortByLength() {
     viewMode,
     pageSizeState,
     imgSizeMode,
+    bodyWidthMode,
     addTag,
     editTag,
     deleteTag,
@@ -412,14 +454,14 @@ function sortByLength() {
     sortByLength,
     removeDuplicates,
     importTagsFromFileContent,
+    importTagsFromFileContentWithWorker,
     exportTagsToFile,
     exportImageTags,
     copyAllJson,
+    clearAllTags,
     setViewMode,
     setPageSize,
     setImgSizeMode,
-    bodyWidthMode,
     setBodyWidthMode,
-
   }
 }
