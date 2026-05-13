@@ -53,6 +53,7 @@
             <button class="toolbar-btn" @click="duplicatesAndToast">Duplicates</button>
             <button class="toolbar-btn" @click="exportImagesAndToast">Export Images</button>
             <button class="toolbar-btn" @click="handleCopyAllJson">Copy JSON</button>
+            <button class="toolbar-btn" @click="clearAllAndToast">Clear All</button>
             <button class="toolbar-btn" @click="toggleShowHidden">
               Hidden: {{ showHidden ? 'On' : 'Off' }}
             </button>
@@ -295,6 +296,7 @@ const {
   exportTagsToFile,
   exportImageTags,
   copyAllJson,
+  clearAllTags,
   setViewMode,
   setPageSize,
   setImgSizeMode,
@@ -538,6 +540,18 @@ function duplicatesAndToast() {
 function exportImagesAndToast() {
   exportImageTags()
   showToast('Image tags exported')
+}
+
+function clearAllAndToast() {
+  if (!window.confirm('Clear all content? This cannot be undone.')) return
+  clearAllTags()
+  newTagName.value = ''
+  searchImmediate.value = ''
+  search.value = ''
+  currentPage.value = 1
+  splitImagePage.value = 1
+  splitTextPage.value = 1
+  showToast('Cleared')
 }
 
 function toggleShowHidden() {

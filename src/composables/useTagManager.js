@@ -383,6 +383,11 @@ function sortByLength() {
     await navigator.clipboard.writeText(payload)
   }
 
+  function clearAllTags() {
+    pushUndoSnapshot()
+    tagsState.value = []
+  }
+
   function setViewMode(mode) {
     viewMode.value = mode
   }
@@ -415,6 +420,7 @@ function sortByLength() {
     exportTagsToFile,
     exportImageTags,
     copyAllJson,
+    clearAllTags,
     setViewMode,
     setPageSize,
     setImgSizeMode,
