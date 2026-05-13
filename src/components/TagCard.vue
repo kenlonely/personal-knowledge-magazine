@@ -5,6 +5,7 @@
     :class="[
       sizeClass,
       `img-size-${imgSizeMode}`,
+      tag?.meta?.styleClass,
       { 'is-hidden': tag.hidden, 'is-struck': tag.struck, 'is-expanded': isExpanded }
     ]"
   >
@@ -41,20 +42,22 @@
 
     <div class="tag-body">
       <div class="body-header">
-        <div class="card-kicker">{{ tag.parsed.type }}</div>
+        <div
+          class="card-kicker"
+          v-html="renderHighlightedText(tag.parsed.type, normalizedSearchTerms)"
+        ></div>
 
         <button class="toggle-btn" type="button" @click="toggleBody">
           {{ isExpanded ? '收起資訊' : '展開資訊' }}
         </button>
       </div>
 
-      <!-- content 永遠展示 -->
       <div class="tag-content">
         <template v-if="tag.parsed.type === 'text'">
           <div class="text-content prose-text">
             <div v-if="showSnippetMode" class="snippet-box" v-html="snippetHtml"></div>
 
-            <template v-else-if="isLong && renderedChunks.length">
+            <template v-else-if="isLong && renderedChunks.length && !showFullText">
               <div
                 v-for="(chunk, chunkIndex) in renderedChunks"
                 :key="`${tag.id}-${chunkIndex}`"
@@ -62,13 +65,22 @@
                 v-html="chunk"
               ></div>
 
-              <button
-                v-if="visibleChunkCount < chunks.length"
-                class="load-more-btn"
-                @click="loadMore"
-              >
-                Load More
-              </button>
+              <div v-if="visibleChunkCount < chunks.length" class="load-actions">
+                <button
+                  class="load-more-btn"
+                  type="button"
+                  @click="loadMore"
+                >
+                  Load More
+                </button>
+                <button
+                  class="load-more-btn"
+                  type="button"
+                  @click="loadFull"
+                >
+                  Load Full
+                </button>
+              </div>
             </template>
 
             <template v-else>
@@ -76,45 +88,59 @@
             </template>
           </div>
         </template>
-
-        <template v-else>
-          <!-- 這個 tag-title 也算收起資訊，所以移到 more 區塊 -->
-        </template>
       </div>
 
-      <!-- 收起資訊：tag-title / raw-code / meta / actions -->
       <transition name="fade-slide">
         <div v-show="isExpanded" class="tag-body-more">
-          <h3 v-if="tag.parsed.type !== 'text'" class="tag-title">
-            {{ tag.parsed.displayTitle }}
-          </h3>
+          <h3
+            v-if="tag.parsed.type !== 'text'"
+            class="tag-title"
+            v-html="renderHighlightedText(tag.parsed.displayTitle, normalizedSearchTerms)"
+          ></h3>
 
-          <div v-if="showRawMediaCode" class="raw-code">
-            {{ tag.name }}
+          <div
+            v-if="showRawMediaCode"
+            class="raw-code"
+            v-html="renderHighlightedText(tag.name, normalizedSearchTerms)"
+          ></div>
+
+          <div v-if="tag.meta?.badge || tag.meta?.note" class="info-block">
+            <div
+              v-if="tag.meta?.badge"
+              class="tag-badge"
+              v-html="renderHighlightedText(tag.meta.badge, normalizedSearchTerms)"
+            ></div>
+
+            <p
+              v-if="tag.meta?.note"
+              class="tag-note"
+              v-html="renderHighlightedText(tag.meta.note, normalizedSearchTerms)"
+            ></p>
           </div>
 
           <div class="meta-row">
-            <span>ID: {{ tag.id }}</span>
-            <span>Updated: {{ tag.updatedAtFormatted }}</span>
+            <span v-html="renderHighlightedText(`ID: ${tag.id}`, normalizedSearchTerms)"></span>
+            <span v-html="renderHighlightedText(`Updated: ${tag.updatedAtFormatted}`, normalizedSearchTerms)"></span>
           </div>
 
           <div class="action-row">
-            <button class="action-btn" @click="$emit('edit', tag)">Edit</button>
-            <button class="action-btn" @click="$emit('delete', tag.id)">Delete</button>
-            <button class="action-btn" @click="handleCopy">Copy</button>
+            <button class="action-btn" type="button" @click="emit('edit', tag)">Edit</button>
+            <button class="action-btn" type="button" @click="emit('delete', tag.id)">Delete</button>
+            <button class="action-btn" type="button" @click="handleCopy">Copy</button>
             <button
               class="action-btn"
-              @click="$emit('find', tag.parsed.type === 'text' ? tag.parsed.displayTitle : tag.name)"
+              type="button"
+              @click="emit('find', tag.parsed.type === 'text' ? tag.parsed.displayTitle : tag.name)"
             >
               Find
             </button>
-            <button class="action-btn" @click="$emit('toggle-hide', tag.id)">
+            <button class="action-btn" type="button" @click="emit('toggle-hide', tag.id)">
               {{ tag.hidden ? 'Unhide' : 'Hide' }}
             </button>
-            <button class="action-btn" @click="$emit('toggle-strike', tag.id)">
+            <button class="action-btn" type="button" @click="emit('toggle-strike', tag.id)">
               {{ tag.struck ? 'Unstrike' : 'Strike' }}
             </button>
-            <button class="action-btn" @click="goFullscreen">Fullscreen</button>
+            <button class="action-btn" type="button" @click="goFullscreen">Fullscreen</button>
           </div>
         </div>
       </transition>
@@ -123,7 +149,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   tag: {
@@ -138,19 +164,25 @@ const props = defineProps({
     type: String,
     default: 'md'
   },
-  searchTerm: {
-    type: String,
-    default: ''
+  searchTerms: {
+    type: Array,
+    default: () => []
+  },
+  hasActiveSearch: {
+    type: Boolean,
+    default: false
   }
 })
 
-defineEmits(['edit', 'delete', 'find', 'toggle-hide', 'toggle-strike'])
+const emit = defineEmits(['edit', 'delete', 'find', 'toggle-hide', 'toggle-strike'])
 
 const rootEl = ref(null)
 const visibleChunkCount = ref(3)
 const isExpanded = ref(false)
+const showFullText = ref(false)
 
 const isTextType = computed(() => props.tag?.parsed?.type === 'text')
+
 const rawText = computed(() => {
   if (!isTextType.value) return ''
   return props.tag?.parsed?.displayTitle || props.tag?.name || ''
@@ -160,7 +192,12 @@ const showRawMediaCode = computed(() => {
   return ['image', 'iframe', 'video'].includes(props.tag?.parsed?.type)
 })
 
-const normalizedSearch = computed(() => (props.searchTerm || '').trim().toLowerCase())
+const normalizedSearchTerms = computed(() => {
+  const fromSearch = Array.isArray(props.searchTerms) ? props.searchTerms : []
+  const fromMeta = Array.isArray(props.tag?.meta?.highlights) ? props.tag.meta.highlights : []
+
+  return [...new Set([...fromSearch, ...fromMeta].map((s) => String(s).trim()).filter(Boolean))]
+})
 
 function escapeHtml(value) {
   return String(value || '')
@@ -171,13 +208,23 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;')
 }
 
-function highlightText(text, keyword) {
-  const safeText = escapeHtml(text)
-  if (!keyword) return safeText
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
-  const escapedKeyword = keyword.replace(/[.*+?^${}()|[]\]/g, '\\$&')
-  const regex = new RegExp(`(${escapedKeyword})`, 'ig')
+function highlightText(text, terms = []) {
+  const safeText = escapeHtml(text)
+  if (!terms.length) return safeText
+
+  const escapedTerms = terms.map(escapeRegExp).filter(Boolean)
+  if (!escapedTerms.length) return safeText
+
+  const regex = new RegExp(`(${escapedTerms.join('|')})`, 'ig')
   return safeText.replace(regex, '<mark>$1</mark>')
+}
+
+function renderHighlightedText(text, terms = []) {
+  return highlightText(text, terms)
 }
 
 const paragraphs = computed(() => {
@@ -224,7 +271,7 @@ const renderedChunks = computed(() => {
       .filter(Boolean)
 
     return lines
-      .map((line) => `<p>${highlightText(line, normalizedSearch.value)}</p>`)
+      .map((line) => `<p>${highlightText(line, normalizedSearchTerms.value)}</p>`)
       .join('')
   })
 })
@@ -240,7 +287,7 @@ const fullHtml = computed(() => {
 
       return `
         <div class="chunk-block">
-          ${lines.map((line) => `<p>${highlightText(line, normalizedSearch.value)}</p>`).join('')}
+          ${lines.map((line) => `<p>${highlightText(line, normalizedSearchTerms.value)}</p>`).join('')}
         </div>
       `
     })
@@ -248,37 +295,59 @@ const fullHtml = computed(() => {
 })
 
 const showSnippetMode = computed(() => {
-  return Boolean(normalizedSearch.value) && isTextType.value
+  return Boolean(props.hasActiveSearch) && isTextType.value
 })
 
 const snippetHtml = computed(() => {
   if (!showSnippetMode.value) return ''
 
   const text = rawText.value
-  const keyword = normalizedSearch.value
-  const lower = text.toLowerCase()
-  const index = lower.indexOf(keyword)
+  const terms = normalizedSearchTerms.value
 
-  if (index === -1) {
-    return `<p>${highlightText(text.slice(0, 240), keyword)}</p>`
+  if (!terms.length) {
+    return `<p>${escapeHtml(text.slice(0, 240))}</p>`
   }
 
+  const lower = text.toLowerCase()
+  const firstTerm = terms.find((t) => lower.includes(t.toLowerCase()))
+
+  if (!firstTerm) {
+    return `<p>${highlightText(text.slice(0, 240), terms)}</p>`
+  }
+
+  const index = lower.indexOf(firstTerm.toLowerCase())
   const start = Math.max(0, index - 120)
-  const end = Math.min(text.length, index + keyword.length + 120)
+  const end = Math.min(text.length, index + firstTerm.length + 120)
   const prefix = start > 0 ? '...' : ''
   const suffix = end < text.length ? '...' : ''
   const snippet = `${prefix}${text.slice(start, end)}${suffix}`
 
-  return `<p>${highlightText(snippet, keyword)}</p>`
+  return `<p>${highlightText(snippet, terms)}</p>`
 })
 
 function toggleBody() {
   isExpanded.value = !isExpanded.value
+  if (!isExpanded.value) {
+    showFullText.value = false
+  }
 }
 
 function loadMore() {
   visibleChunkCount.value += 3
 }
+
+function loadFull() {
+  showFullText.value = true
+}
+
+watch(
+  () => props.tag?.id,
+  () => {
+    visibleChunkCount.value = 3
+    isExpanded.value = false
+    showFullText.value = false
+  }
+)
 
 async function handleCopy() {
   try {
@@ -471,6 +540,13 @@ function goFullscreen() {
   border: 1px solid #eee2aa;
 }
 
+.load-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
 .tag-body-more {
   display: flex;
   flex-direction: column;
@@ -494,6 +570,31 @@ function goFullscreen() {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.info-block {
+  display: grid;
+  gap: 8px;
+}
+
+.tag-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #111;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tag-note {
+  margin: 0;
+  color: #555;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 .meta-row {

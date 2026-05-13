@@ -8,7 +8,6 @@ import {
   normalizeInputToTagContent,
   parseAttributes,
   removeDuplicateTags,
-  stripHtml,
 } from '../utils/tagUtils'
 
 const STORAGE_KEY = 'my_tags_state_v21'
@@ -28,6 +27,18 @@ function formatDate(isoString) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+function normalizeMeta(meta = {}) {
+  return {
+    badge: typeof meta.badge === 'string' ? meta.badge : '',
+    styleClass: typeof meta.styleClass === 'string' ? meta.styleClass : '',
+    note: typeof meta.note === 'string' ? meta.note : '',
+    highlights: Array.isArray(meta.highlights)
+      ? meta.highlights.map((item) => String(item).trim()).filter(Boolean)
+      : [],
+    source: typeof meta.source === 'string' ? meta.source : '',
+  }
 }
 
 function parseTagName(name = '') {
@@ -67,8 +78,6 @@ function parseTagName(name = '') {
     }
   }
 
- 
-
   return {
     type: 'text',
     displayTitle: decodeHtmlEntities(name),
@@ -86,7 +95,7 @@ function normalizeTag(tag) {
     updatedAt: tag.updatedAt || tag.createdAt || now,
     hidden: !!tag.hidden,
     struck: !!tag.struck,
-    meta: tag.meta || {},
+    meta: normalizeMeta(tag.meta),
   }
 
   return {
@@ -105,7 +114,7 @@ function serializeTag(tag) {
     updatedAt: tag.updatedAt,
     hidden: tag.hidden,
     struck: tag.struck,
-    meta: tag.meta,
+    meta: normalizeMeta(tag.meta),
   }
 }
 
@@ -130,7 +139,6 @@ const viewMode = ref(localStorage.getItem(VIEW_KEY) || 'grid-list')
 const pageSizeState = ref(Number(localStorage.getItem(PAGE_SIZE_KEY) || 20))
 const imgSizeMode = ref(localStorage.getItem(IMG_SIZE_KEY) || 'md')
 const bodyWidthMode = ref(localStorage.getItem(BODY_WIDTH_KEY) || 'default')
-
 
 watch(
   tagsState,
@@ -181,22 +189,39 @@ export function useTagManager() {
       updatedAt: now,
       hidden: false,
       struck: false,
-      meta: { source: 'manual' },
+      meta: {
+        source: 'manual',
+        badge: '',
+        styleClass: '',
+        note: '',
+        highlights: [],
+      },
     })
 
     tagsState.value = [newTag, ...tagsState.value]
   }
 
-  function editTag(id, newName) {
+  function editTag(id, payload) {
     pushUndoSnapshot()
     const now = new Date().toISOString()
 
     tagsState.value = tagsState.value.map((tag) => {
       if (tag.id !== id) return tag
-      const finalName = newName.length > 3000 ? newName : formatParagraphs(newName)
+
+      const nextName =
+        typeof payload === 'string' ? payload : String(payload?.name ?? tag.name ?? '')
+
+      const nextMeta = typeof payload === 'object' && payload?.meta ? payload.meta : {}
+
+      const finalName = nextName.length > 3000 ? nextName : formatParagraphs(nextName)
+
       return normalizeTag({
         ...tag,
         name: finalName,
+        meta: {
+          ...normalizeMeta(tag.meta),
+          ...normalizeMeta(nextMeta),
+        },
         updatedAt: now,
       })
     })
@@ -250,70 +275,66 @@ export function useTagManager() {
     tagsState.value = arr
   }
 
-let englishFirst = false
+  let englishFirst = false
 
-function getLangType(str) {
-  const s = (str || "").trim()
+  function getLangType(str) {
+    const s = (str || '').trim()
 
-  if (/[\u4E00-\u9FFF]/.test(s)) return "zh"
-  if (/[A-Za-z]/.test(s)) return "en"
-  return "other"
-}
+    if (/[\u4E00-\u9FFF]/.test(s)) return 'zh'
+    if (/[A-Za-z]/.test(s)) return 'en'
+    return 'other'
+  }
 
-function getTypeOrder(type) {
-  if (englishFirst) {
-    if (type === "en") return 0
-    if (type === "zh") return 1
-    return 2
-  } else {
-    if (type === "zh") return 0
-    if (type === "en") return 1
+  function getTypeOrder(type) {
+    if (englishFirst) {
+      if (type === 'en') return 0
+      if (type === 'zh') return 1
+      return 2
+    }
+
+    if (type === 'zh') return 0
+    if (type === 'en') return 1
     return 2
   }
-}
 
-function sortByLength() {
-  pushUndoSnapshot()
+  function sortByLength() {
+    pushUndoSnapshot()
+    englishFirst = !englishFirst
 
-  englishFirst = !englishFirst
+    const zhCollator = new Intl.Collator('zh-Hant-u-co-stroke', {
+      sensitivity: 'base',
+      numeric: true,
+    })
 
-  const zhCollator = new Intl.Collator("zh-Hant-u-co-stroke", {
-    sensitivity: "base",
-    numeric: true,
-  })
+    const enCollator = new Intl.Collator('en', {
+      sensitivity: 'base',
+      numeric: true,
+    })
 
-  const enCollator = new Intl.Collator("en", {
-    sensitivity: "base",
-    numeric: true,
-  })
+    tagsState.value = [...tagsState.value].sort((a, b) => {
+      const aName = (a.name || '').trim()
+      const bName = (b.name || '').trim()
 
-  tagsState.value = [...tagsState.value].sort((a, b) => {
-    const aName = (a.name || "").trim()
-    const bName = (b.name || "").trim()
+      const aType = getLangType(aName)
+      const bType = getLangType(bName)
 
-    const aType = getLangType(aName)
-    const bType = getLangType(bName)
+      const typeDiff = getTypeOrder(aType) - getTypeOrder(bType)
+      if (typeDiff !== 0) return typeDiff
 
-    // 1. 先依中英群組排序
-    const typeDiff = getTypeOrder(aType) - getTypeOrder(bType)
-    if (typeDiff !== 0) return typeDiff
+      const lenDiff = [...aName].length - [...bName].length
+      if (lenDiff !== 0) return lenDiff
 
-    // 2. 同群組比字串長度
-    const lenDiff = [...aName].length - [...bName].length
-    if (lenDiff !== 0) return lenDiff
+      if (aType === 'zh' && bType === 'zh') {
+        return zhCollator.compare(aName, bName)
+      }
 
-    // 3. 同群組同長度，再做穩定文字排序
-    if (aType === "zh" && bType === "zh") {
-      return zhCollator.compare(aName, bName)
-    }
+      if (aType === 'en' && bType === 'en') {
+        return enCollator.compare(aName, bName)
+      }
 
-    if (aType === "en" && bType === "en") {
-      return enCollator.compare(aName, bName)
-    }
-
-    return aName.localeCompare(bName)
-  })
-}
+      return aName.localeCompare(bName)
+    })
+  }
 
   function removeDuplicates() {
     pushUndoSnapshot()
@@ -406,6 +427,7 @@ function sortByLength() {
     viewMode,
     pageSizeState,
     imgSizeMode,
+    bodyWidthMode,
     addTag,
     editTag,
     deleteTag,
@@ -424,8 +446,6 @@ function sortByLength() {
     setViewMode,
     setPageSize,
     setImgSizeMode,
-    bodyWidthMode,
     setBodyWidthMode,
-
   }
 }
