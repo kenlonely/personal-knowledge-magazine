@@ -41,18 +41,7 @@
     </div>
 
     <div class="tag-body">
-      <div class="body-header">
-        <div
-          class="card-kicker"
-          v-html="renderHighlightedText(tag.parsed.type, normalizedSearchTerms)"
-        ></div>
-
-        <button class="toggle-btn" type="button" @click="toggleBody">
-          {{ isExpanded ? '收起資訊' : '展開資訊' }}
-        </button>
-      </div>
-
-      <div class="tag-content">
+            <div class="tag-content">
         <template v-if="tag.parsed.type === 'text'">
           <div class="text-content prose-text">
             <div v-if="showSnippetMode" class="snippet-box" v-html="snippetHtml"></div>
@@ -89,6 +78,17 @@
           </div>
         </template>
       </div>
+
+      <div class="body-header">
+        <div
+          class="card-kicker"
+          v-html="renderHighlightedText(tag.parsed.type, normalizedSearchTerms)"
+        ></div>
+        <button class="toggle-btn" type="button" @click="toggleBody">
+          {{ isExpanded ? '收起資訊' : '展開資訊' }}
+        </button>
+      </div>
+
 
       <transition name="fade-slide">
         <div v-show="isExpanded" class="tag-body-more">
