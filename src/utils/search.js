@@ -9,6 +9,122 @@ export function escapeHtml(str = '') {
     .replace(/'/g, '&#39;')
 }
 
+function normalizeText(value = '') {
+  return String(value ?? '')
+}
+
+export function tokenizeSearchQuery(query = '') {
+  return normalizeText(query)
+    .trim()
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+export function getQueryTerms(query = '', { unique = true, lower = false } = {}) {
+  let terms = tokenizeSearchQuery(query)
+
+  if (lower) {
+    terms = terms.map((item) => item.toLowerCase())
+  }
+
+  return unique ? [...new Set(terms)] : terms
+}
+
+export function buildHighlightRegex(terms = []) {
+  const cleanTerms = [...new Set(
+    (terms || [])
+      .map((item) => normalizeText(item).trim())
+      .filter(Boolean)
+  )].sort((a, b) => b.length - a.length)
+
+  if (!cleanTerms.length) return null
+
+  return new RegExp(`(${cleanTerms.map(escapeRegExp).join('|')})`, 'gi')
+}
+
+export function highlightHtml(text = '', query = '') {
+  const raw = normalizeText(text)
+  const terms = getQueryTerms(query)
+  const escaped = escapeHtml(raw)
+  const regex = buildHighlightRegex(terms)
+
+  if (!regex) {
+    return escaped.replace(/\n/g, '<br>')
+  }
+
+  return escaped
+    .replace(regex, '<mark class="hl">$1</mark>')
+    .replace(/\n/g, '<br>')
+}
+
+/**
+ * Highlight with [{ text, color }] items.
+ * Also supports legacy string array: ['word1', 'word2'].
+ */
+export function highlightHtmlWithItems(text = '', items = []) {
+  const raw = normalizeText(text)
+  const escaped = escapeHtml(raw)
+
+  const cleanItems = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { text: normalizeText(item).trim(), color: '#fff2a8' }
+      }
+
+      return {
+        text: normalizeText(item?.text || item?.word || '').trim(),
+        color: normalizeColor(item?.color || '#fff2a8'),
+      }
+    })
+    .filter((item) => item.text)
+
+  if (!cleanItems.length) {
+    return escaped.replace(/\n/g, '<br>')
+  }
+
+  let result = escaped
+
+  for (const item of [...cleanItems].sort((a, b) => b.text.length - a.text.length)) {
+    const regex = buildHighlightRegex([item.text])
+    if (!regex) continue
+
+    result = result.replace(
+      regex,
+      `<mark class="hl" style="background-color: ${item.color}">$1</mark>`
+    )
+  }
+
+  return result.replace(/\n/g, '<br>')
+}
+
+function normalizeColor(value = '#fff2a8') {
+  const color = String(value || '').trim()
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#fff2a8'
+}
+
+export function includesQuery(text = '', query = '', { match = 'every' } = {}) {
+  const raw = normalizeText(text).toLowerCase()
+  const terms = getQueryTerms(query, { lower: true })
+
+  if (!terms.length) return true
+
+  if (match === 'some') {
+    return terms.some((term) => raw.includes(term))
+  }
+
+  return terms.every((term) => raw.includes(term))
+}
+
+export function getMatchedTerms(text = '', query = '') {
+  const raw = normalizeText(text).toLowerCase()
+  const terms = getQueryTerms(query, { lower: true })
+  return terms.filter((term) => raw.includes(term))
+}
+
+/* =========================
+   Search parser / matcher
+   ========================= */
 
 export function parseSearchQuery(query = '') {
   const raw = String(query || '').trim()
@@ -30,7 +146,6 @@ export function parseSearchQuery(query = '') {
   try {
     ast = parseBooleanTokens(tokens)
   } catch (error) {
-    // fallback: if syntax is broken, treat whole textQuery as loose AND terms
     const looseTerms = tokenizeLooseTerms(textQuery)
     ast = buildImplicitAndAst(looseTerms)
   }
@@ -42,14 +157,10 @@ export function parseSearchQuery(query = '') {
     filters,
     ast,
     termsForHighlight: [...new Set(termsForHighlight)],
-    // keep compatibility with older structure if your UI still reads groups
     groups: ast ? [{ terms: termsForHighlight, filters }] : [],
   }
 }
 
-/**
- * Extract field filters from raw query while preserving quoted text.
- */
 function extractFilters(raw = '') {
   const tokens = tokenizeAdvanced(raw)
   const filters = {}
@@ -83,7 +194,6 @@ function extractFilters(raw = '') {
     textQuery: textParts.join(' ').trim(),
   }
 }
-
 
 export function tokenizeAdvanced(input = '') {
   const result = []
@@ -141,7 +251,6 @@ export function tokenizeBooleanQuery(input = '') {
       continue
     }
 
-    // normal word, may include leading "-" like -apple or --apple
     let value = ''
     while (i < s.length && !/\s/.test(s[i]) && !['|', ',', '(', ')'].includes(s[i])) {
       value += s[i]
@@ -153,9 +262,6 @@ export function tokenizeBooleanQuery(input = '') {
   return tokens
 }
 
-/**
- * Loose tokenizer used for fallback.
- */
 function tokenizeLooseTerms(input = '') {
   return tokenizeAdvanced(input).filter(Boolean)
 }
@@ -192,14 +298,6 @@ function termToNode(raw) {
   return node
 }
 
-/**
- * Recursive descent parser
- *
- * precedence:
- * 1. unary NOT
- * 2. AND (explicit "," and implicit whitespace adjacency)
- * 3. OR  ("|")
- */
 export function parseBooleanTokens(tokens = []) {
   let pos = 0
 
@@ -247,7 +345,6 @@ export function parseBooleanTokens(tokens = []) {
     const t = peek()
     if (!t) return null
 
-    // allow standalone "-" term if tokenizer ever emits it
     if (t.type === 'term' && t.value === '-') {
       consume()
       const child = parseUnary()
@@ -263,7 +360,6 @@ export function parseBooleanTokens(tokens = []) {
     if (!left) return null
 
     while (true) {
-      // explicit AND with comma
       if (matchOp(',')) {
         const right = parseUnary()
         if (!right) break
@@ -271,8 +367,6 @@ export function parseBooleanTokens(tokens = []) {
         continue
       }
 
-      // implicit AND by adjacency:
-      // e.g. apple watch => apple AND watch
       const t = peek()
       if (isUnaryStart(t)) {
         const right = parseUnary()
@@ -310,6 +404,30 @@ export function parseBooleanTokens(tokens = []) {
   return ast
 }
 
+function extractTermsFromAst(ast) {
+  const terms = []
+
+  const walk = (node) => {
+    if (!node) return
+    if (node.type === 'TERM' && node.value) {
+      const clean = String(node.value).trim()
+      if (clean) terms.push(clean)
+      return
+    }
+    if (node.type === 'NOT') {
+      walk(node.child)
+      return
+    }
+    if (node.type === 'AND' || node.type === 'OR') {
+      walk(node.left)
+      walk(node.right)
+    }
+  }
+
+  walk(ast)
+  return terms
+}
+
 export function tagToSearchText(tag) {
   return [
     tag.id,
@@ -339,7 +457,6 @@ function matchFilters(tag, filters = {}) {
   return true
 }
 
-/** escaped literal regex */
 export function buildRegex(term) {
   const escaped = escapeRegExp(String(term || ''))
   return new RegExp(escaped, 'i')
@@ -361,46 +478,6 @@ export function evalAst(ast, tagText = '') {
     default:
       return true
   }
-}
-
-function extractTermsFromAst(ast) {
-  const terms = []
-
-  const walk = (node) => {
-    if (!node) return
-    if (node.type === 'TERM' && node.value) {
-      const clean = String(node.value).trim()
-      if (clean) terms.push(clean)
-      return
-    }
-    if (node.type === 'NOT') {
-      walk(node.child)
-      return
-    }
-    if (node.type === 'AND' || node.type === 'OR') {
-      walk(node.left)
-      walk(node.right)
-    }
-  }
-
-  walk(ast)
-  return terms
-}
-
-export function highlightHtml(text = '', terms = []) {
-  const raw = String(text ?? '')
-  const termList = [...new Set((terms || []).filter(Boolean).map(String))]
-    .map((s) => s.trim())
-    .filter(Boolean)
-
-  if (!termList.length) return escapeHtml(raw).replace(/\n/g, '<br>')
-
-  const sortedTerms = termList.sort((a, b) => b.length - a.length)
-  const regex = new RegExp(`(${sortedTerms.map(escapeRegExp).join('|')})`, 'gi')
-
-  return escapeHtml(raw)
-    .replace(regex, '<mark class="hl">$1</mark>')
-    .replace(/\n/g, '<br>')
 }
 
 export function getMatchedSnippet(text = '', terms = [], radius = 140) {
@@ -439,7 +516,6 @@ export function scoreTag(tag, parsed) {
   const text = tagToSearchText(tag)
   let score = 0
 
-  // filter matched gets a base score
   if (matchFilters(tag, parsed.filters)) score += 10
 
   const terms = parsed.termsForHighlight || []
@@ -452,7 +528,6 @@ export function scoreTag(tag, parsed) {
     }
   }
 
-  // small boosts
   if (parsed.ast && evalAst(parsed.ast, text)) score += 30
   if (tag.parsed?.type === 'text') score += 2
   if (!tag.hidden) score += 1

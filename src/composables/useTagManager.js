@@ -29,13 +29,37 @@ function formatDate(isoString) {
   }).format(date)
 }
 
+function normalizeColor(value = '#fff2a8') {
+  const color = String(value || '').trim()
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#fff2a8'
+}
+
+function normalizeHighlightItem(item) {
+  if (typeof item === 'string') {
+    const text = String(item).trim()
+    return text ? { text, color: '#fff2a8' } : null
+  }
+
+  if (item && typeof item === 'object') {
+    const text = String(item.text || item.word || '').trim()
+    if (!text) return null
+
+    return {
+      text,
+      color: normalizeColor(item.color || '#fff2a8'),
+    }
+  }
+
+  return null
+}
+
 function normalizeMeta(meta = {}) {
   return {
     badge: typeof meta.badge === 'string' ? meta.badge : '',
     styleClass: typeof meta.styleClass === 'string' ? meta.styleClass : '',
     note: typeof meta.note === 'string' ? meta.note : '',
     highlights: Array.isArray(meta.highlights)
-      ? meta.highlights.map((item) => String(item).trim()).filter(Boolean)
+      ? meta.highlights.map(normalizeHighlightItem).filter(Boolean)
       : [],
     source: typeof meta.source === 'string' ? meta.source : '',
   }
@@ -67,16 +91,20 @@ function parseTagName(name = '') {
     }
   }
 
-  if (type === 'video') {
-    const sourceMatch = String(name).match(/<source[^>]*src="([^"]+)"/i)
-    const src = sourceMatch?.[1] || parseAttributes(name).src || ''
-    return {
-      type,
-      src,
-      displayTitle: 'Video',
-      rawText: name,
-    }
+if (type === 'video') {
+  const attrs = parseAttributes(name)
+  const sourceMatch = String(name).match(/<source[^>]*src="([^"]+)"/i)
+  const src = sourceMatch?.[1] || attrs.src || ''
+
+  return {
+    type,
+    src,
+    displayTitle: decodeHtmlEntities(
+      attrs.title || attrs['aria-label'] || attrs.name || attrs.alt || 'Video'
+    ),
+    rawText: name,
   }
+}
 
   return {
     type: 'text',

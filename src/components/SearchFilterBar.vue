@@ -1,4 +1,4 @@
-<!-- <template>
+<template>
   <div class="filter-bar">
     <div class="filter-group search-group">
       <label class="filter-label" for="search">Search</label>
@@ -43,4 +43,4 @@ defineProps({
 })
 
 defineEmits(['update:search', 'update:type'])
-</script> -->
+</script>

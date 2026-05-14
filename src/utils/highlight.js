@@ -4,6 +4,11 @@ function normalizeText(value = '') {
   return String(value ?? '')
 }
 
+function normalizeColor(value = '#fff2a8') {
+  const color = String(value || '').trim()
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#fff2a8'
+}
+
 export function tokenizeSearchQuery(query = '') {
   return normalizeText(query)
     .trim()
@@ -56,6 +61,46 @@ export function highlightHtml(text = '', query = '') {
   return escaped
     .replace(regex, '<mark class="hl">$1</mark>')
     .replace(/\n/g, '<br>')
+}
+
+export function highlightHtmlWithItems(text = '', items = []) {
+  const raw = normalizeText(text)
+  const escaped = escapeHtml(raw)
+
+  const cleanItems = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (typeof item === 'string') {
+        const text = normalizeText(item).trim()
+        return text ? { text, color: '#fff2a8' } : null
+      }
+
+      const text = normalizeText(item?.text || item?.word || '').trim()
+      if (!text) return null
+
+      return {
+        text,
+        color: normalizeColor(item?.color || '#fff2a8'),
+      }
+    })
+    .filter(Boolean)
+
+  if (!cleanItems.length) {
+    return escaped.replace(/\n/g, '<br>')
+  }
+
+  let result = escaped
+
+  for (const item of [...cleanItems].sort((a, b) => b.text.length - a.text.length)) {
+    const regex = buildHighlightRegex([item.text])
+    if (!regex) continue
+
+    result = result.replace(
+      regex,
+      `<mark class="hl" style="background-color: ${item.color}">$1</mark>`
+    )
+  }
+
+  return result.replace(/\n/g, '<br>')
 }
 
 export function includesQuery(text = '', query = '', { match = 'every' } = {}) {

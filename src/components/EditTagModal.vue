@@ -34,12 +34,26 @@
 
             <div class="meta-field">
               <label class="edit-label">Highlights</label>
-              <input
-                v-model="highlightsText"
-                class="edit-input"
-                type="text"
-                placeholder="Type comma separated words, or select text in preview"
-              />
+
+              <div class="highlight-builder">
+                <input
+                  v-model="newHighlightText"
+                  class="edit-input highlight-text-input"
+                  type="text"
+                  placeholder="Type highlight text..."
+                  @keydown.enter.prevent="addHighlightItem"
+                />
+                <input
+                  v-model="newHighlightColor"
+                  class="color-input"
+                  type="color"
+                  aria-label="Highlight color"
+                />
+                <button class="toolbar-btn add-btn" type="button" @click="addHighlightItem">
+                  Add
+                </button>
+              </div>
+
               <div class="field-help">
                 Drag-select text in the preview below to add a highlight automatically.
               </div>
@@ -79,13 +93,14 @@
                 {{ draft.meta.badge }}
               </div>
 
-              <div v-if="highlightList.length" class="preview-highlights">
+              <div v-if="highlightItems.length" class="preview-highlights">
                 <span
-                  v-for="(item, index) in highlightList"
-                  :key="`${item}-${index}`"
+                  v-for="(item, index) in highlightItems"
+                  :key="`${item.text}-${item.color}-${index}`"
                   class="preview-chip"
+                  :style="{ backgroundColor: item.color }"
                 >
-                  <span>{{ item }}</span>
+                  <span>{{ item.text }}</span>
                   <button class="chip-delete-btn" type="button" @click="removeHighlight(index)">
                     ×
                   </button>
@@ -111,7 +126,7 @@
 <script setup>
 import { computed, reactive, ref, watch, nextTick } from 'vue'
 import { detectType } from '../utils/tagUtils'
-import { highlightHtml, parseSearchQuery } from '../utils/search'
+import { parseSearchQuery } from '../utils/search'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -131,25 +146,66 @@ const draft = reactive({
 })
 
 const previewEl = ref(null)
-const highlightsText = ref('')
+const newHighlightText = ref('')
+const newHighlightColor = ref('#fff2a8')
 
-function normalizeHighlights(text) {
-  return String(text || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
+function clampColor(value, fallback = '#fff2a8') {
+  const v = String(value || '').trim()
+  return /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback
 }
 
-function uniqueList(list) {
-  return [...new Set(list.map((s) => String(s).trim()).filter(Boolean))]
+function normalizeText(text) {
+  return String(text || '').trim()
+}
+
+function uniqueHighlights(list) {
+  const seen = new Set()
+  const result = []
+
+  for (const item of list) {
+    const text = normalizeText(item?.text)
+    const color = clampColor(item?.color)
+    if (!text) continue
+
+    const key = `${text.toLowerCase()}::${color.toLowerCase()}`
+    if (seen.has(key)) continue
+
+    seen.add(key)
+    result.push({ text, color })
+  }
+
+  return result
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 function syncDraftFromTag(tag) {
   draft.name = tag?.name || ''
   draft.meta.badge = tag?.meta?.badge || ''
   draft.meta.note = tag?.meta?.note || ''
-  draft.meta.highlights = Array.isArray(tag?.meta?.highlights) ? [...tag.meta.highlights] : []
-  highlightsText.value = draft.meta.highlights.join(', ')
+
+  const rawHighlights = Array.isArray(tag?.meta?.highlights) ? tag.meta.highlights : []
+  draft.meta.highlights = uniqueHighlights(
+    rawHighlights.map((item) => {
+      if (typeof item === 'string') {
+        return { text: item, color: '#fff2a8' }
+      }
+      return {
+        text: item?.text ?? item?.word ?? '',
+        color: item?.color ?? '#fff2a8',
+      }
+    })
+  )
+
+  newHighlightText.value = ''
+  newHighlightColor.value = '#fff2a8'
 }
 
 watch(
@@ -172,28 +228,69 @@ const tagType = computed(() => detectType(draft.name))
 const isMedia = computed(() => tagType.value !== 'text')
 const typeClass = computed(() => `type-${tagType.value}`)
 
-const highlightList = computed(() => normalizeHighlights(highlightsText.value))
+const highlightItems = computed(() => uniqueHighlights(draft.meta.highlights))
+
+function highlightTextToRegex(text) {
+  const escaped = String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(${escaped})`, 'gi')
+}
+
+function buildHighlightedHtml(rawText, items) {
+  let html = escapeHtml(rawText)
+
+  const sorted = [...items].sort((a, b) => b.text.length - a.text.length)
+
+  for (const item of sorted) {
+    const regex = highlightTextToRegex(item.text)
+    html = html.replace(regex, (match) => {
+      return `<mark class="hl" style="background-color: ${item.color}">${escapeHtml(match)}</mark>`
+    })
+  }
+
+  return html.replace(/\n/g, '<br>')
+}
 
 const previewHtml = computed(() => {
   const parsed = parseSearchQuery(props.searchQuery)
   const searchTerms = Array.isArray(parsed?.termsForHighlight) ? parsed.termsForHighlight : []
-  const allTerms = uniqueList([...searchTerms, ...highlightList.value])
-  return highlightHtml(draft.name, allTerms)
+
+  const combined = uniqueHighlights([
+    ...searchTerms.map((term) => ({ text: term, color: '#dbeafe' })),
+    ...highlightItems.value,
+  ])
+
+  return buildHighlightedHtml(draft.name, combined)
 })
 
-function addHighlightWord(word) {
-  const cleaned = String(word || '').trim()
-  if (!cleaned) return
+function addHighlightItem() {
+  const text = normalizeText(newHighlightText.value)
+  if (!text) return
 
-  const current = normalizeHighlights(highlightsText.value)
-  const next = uniqueList([...current, cleaned])
-  highlightsText.value = next.join(', ')
+  const next = uniqueHighlights([
+    ...highlightItems.value,
+    { text, color: clampColor(newHighlightColor.value) },
+  ])
+
+  draft.meta.highlights = next
+  newHighlightText.value = ''
+}
+
+function addHighlightWord(word) {
+  const text = normalizeText(word)
+  if (!text) return
+
+  const next = uniqueHighlights([
+    ...highlightItems.value,
+    { text, color: clampColor(newHighlightColor.value) },
+  ])
+
+  draft.meta.highlights = next
 }
 
 function removeHighlight(index) {
-  const current = normalizeHighlights(highlightsText.value)
-  current.splice(index, 1)
-  highlightsText.value = current.join(', ')
+  const next = highlightItems.value.slice()
+  next.splice(index, 1)
+  draft.meta.highlights = next
 }
 
 async function handlePreviewMouseUp() {
@@ -229,7 +326,7 @@ function handleSave() {
     meta: {
       badge: draft.meta.badge?.trim?.() || '',
       note: draft.meta.note?.trim?.() || '',
-      highlights: highlightList.value,
+      highlights: highlightItems.value,
     },
   })
 }
@@ -390,6 +487,37 @@ function handleSave() {
   color: #666;
 }
 
+.highlight-builder {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.highlight-text-input {
+  min-width: 0;
+}
+
+.color-input {
+  width: 52px;
+  height: 52px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.add-btn {
+  height: 52px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  background: var(--type-color);
+  color: #fff;
+  font-weight: 700;
+}
+
 .preview-box {
   min-height: 420px;
   border-radius: 18px;
@@ -453,8 +581,7 @@ function handleSave() {
   gap: 6px;
   padding: 5px 9px;
   border-radius: 999px;
-  background: rgba(17, 17, 17, 0.06);
-  color: #444;
+  color: #111;
   font-size: 12px;
 }
 
@@ -464,11 +591,13 @@ function handleSave() {
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
-  color: #777;
+  color: inherit;
   padding: 0;
+  opacity: 0.7;
 }
 
 .chip-delete-btn:hover {
+  opacity: 1;
   color: #d11;
 }
 
@@ -487,9 +616,20 @@ function handleSave() {
   color: var(--type-color);
 }
 
+.toolbar-btn {
+  border: 1px solid rgba(17, 17, 17, 0.14);
+  background: #fff;
+  color: #222;
+  padding: 10px 16px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .toolbar-btn.primary {
   background: var(--type-color);
   color: #fff;
+  border-color: transparent;
 }
 
 .toolbar-btn.primary:hover {
@@ -497,7 +637,6 @@ function handleSave() {
 }
 
 :deep(mark.hl) {
-  background: var(--type-mark);
   color: inherit;
   border-radius: 6px;
   padding: 0 2px;
@@ -511,6 +650,15 @@ function handleSave() {
   .edit-textarea,
   .preview-box {
     min-height: 280px;
+  }
+
+  .highlight-builder {
+    grid-template-columns: 1fr;
+  }
+
+  .color-input,
+  .add-btn {
+    width: 100%;
   }
 }
 </style>

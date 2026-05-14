@@ -1,4 +1,4 @@
-<!-- <template>
+<template>
   <section class="hero">
     <div class="container hero-grid">
       <div class="hero-main">
@@ -49,4 +49,4 @@ defineProps({
     required: true
   }
 })
-</script> -->
+</script>
